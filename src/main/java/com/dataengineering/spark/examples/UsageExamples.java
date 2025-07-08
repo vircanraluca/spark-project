@@ -19,13 +19,17 @@ import static org.apache.spark.sql.functions.*;
 public class UsageExamples {
     private static final Logger logger = Logger.getLogger(UsageExamples.class);
     private final SparkSession spark;
+    private final DataEngineeringPipeline pipeline;
 
     public UsageExamples() {
         this.spark = SparkSession.builder()
                 .appName("Data Engineering Examples")
                 .master("local[*]")
                 .getOrCreate();
+
+        this.pipeline = new DataEngineeringPipeline();
     }
+
 
     public void missingDataAnalysis() {
         logger.info("=== Exemplu 7: Analiza Valorilor Lipsă ===");
@@ -90,6 +94,29 @@ public class UsageExamples {
 
         Dataset<Row> converted = sales.withColumn("amount_eur", col("amount").multiply(exchangeRate));
         converted.select("order_id", "amount", "amount_eur").show(10);
+    }
+
+    public void processCSVExample() {
+        logger.info("=== CSV Processing Example ===");
+
+        Dataset<Row> sales = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv", true, ",");
+        sales = pipeline.cleanAndValidateData(sales);
+        sales = pipeline.filterData(sales, "amount > 50");
+
+        Map<String, String> aggregations = new HashMap<>();
+        aggregations.put("amount", "sum");
+        aggregations.put("quantity", "sum");
+        aggregations.put("order_id", "count");
+
+        Dataset<Row> products = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("src/main/data/products_full.csv");
+
+        Dataset<Row> salesByCategory = sales.join(products, "product_id");
+
+        pipeline.saveAsCSV(salesByCategory, "output/sales_by_category", true);
+        pipeline.logDatasetInfo(salesByCategory, "Sales by Category");
     }
 
     public static void main(String[] args) {
@@ -223,6 +250,7 @@ public class UsageExamples {
         examples.detectPriceOutliers();
         examples.currencyConversionExample();
 
+        examples.processCSVExample();
         examples.spark.stop();
 
         // Închide sesiunea
