@@ -24,3 +24,5 @@ Advanced SQL queries for identifying trends and computing KPIs.
 Data quality checks (e.g., missing values, outlier detection)
 
 Currency conversion example, demonstrating applied business logic
+
+The project simulates a real-world data processing pipeline, making it ideal for learning Spark SQL, data modeling, and ETL development in a scalable environment.
