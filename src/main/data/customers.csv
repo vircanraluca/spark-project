@@ -1,0 +1,51 @@
+customer_id,customer_name,customer_segment
+1,Customer_1,Corporate
+2,Customer_2,Home Office
+3,Customer_3,Corporate
+4,Customer_4,Retail
+5,Customer_5,Corporate
+6,Customer_6,Home Office
+7,Customer_7,Home Office
+8,Customer_8,Corporate
+9,Customer_9,Home Office
+10,Customer_10,Retail
+11,Customer_11,Retail
+12,Customer_12,Corporate
+13,Customer_13,Corporate
+14,Customer_14,Corporate
+15,Customer_15,Home Office
+16,Customer_16,Retail
+17,Customer_17,Retail
+18,Customer_18,Home Office
+19,Customer_19,Retail
+20,Customer_20,Corporate
+21,Customer_21,Corporate
+22,Customer_22,Corporate
+23,Customer_23,Retail
+24,Customer_24,Corporate
+25,Customer_25,Home Office
+26,Customer_26,Home Office
+27,Customer_27,Retail
+28,Customer_28,Home Office
+29,Customer_29,Home Office
+30,Customer_30,Retail
+31,Customer_31,Corporate
+32,Customer_32,Corporate
+33,Customer_33,Corporate
+34,Customer_34,Retail
+35,Customer_35,Home Office
+36,Customer_36,Corporate
+37,Customer_37,Corporate
+38,Customer_38,Retail
+39,Customer_39,Corporate
+40,Customer_40,Retail
+41,Customer_41,Home Office
+42,Customer_42,Retail
+43,Customer_43,Retail
+44,Customer_44,Retail
+45,Customer_45,Retail
+46,Customer_46,Home Office
+47,Customer_47,Home Office
+48,Customer_48,Corporate
+49,Customer_49,Home Office
+50,Customer_50,Home Office
