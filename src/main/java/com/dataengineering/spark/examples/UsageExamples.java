@@ -5,407 +5,229 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.log4j.Logger;
+import scala.collection.Seq;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+
+import static org.apache.spark.sql.functions.*;
 
 /**
  * Exemple practice de utilizare a pipeline-ului de Data Engineering
  */
 public class UsageExamples {
-
     private static final Logger logger = Logger.getLogger(UsageExamples.class);
-    private DataEngineeringPipeline pipeline;
+    private final SparkSession spark;
 
     public UsageExamples() {
-        pipeline = new DataEngineeringPipeline();
+        this.spark = SparkSession.builder()
+                .appName("Data Engineering Examples")
+                .master("local[*]")
+                .getOrCreate();
     }
 
-    /**
-     * Exemplu 1: Procesare fișiere CSV și agregare date
-     */
-    public void processCSVExample() {
-        logger.info("=== Exemplu 1: Procesare CSV ===");
+    public void missingDataAnalysis() {
+        logger.info("=== Exemplu 7: Analiza Valorilor Lipsă ===");
 
-        try {
-            // Citire date vânzări
-            Dataset<Row> sales = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv", true, ",");
+        Dataset<Row> sales = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv");
 
-            // Curățare date
-            sales = pipeline.cleanAndValidateData(sales);
+        Dataset<Row> nullCounts = sales.selectExpr(
+                "sum(case when product_id is null then 1 else 0 end) as null_product_id",
+                "sum(case when amount is null then 1 else 0 end) as null_amount",
+                "sum(case when quantity is null then 1 else 0 end) as null_quantity"
+        );
 
-            // Filtrare doar vânzări peste 1000 RON
-            sales = pipeline.filterData(sales, "amount > 1000");
 
-            // Agregare pe categorii
-            Map<String, String> aggregations = new HashMap<>();
-            aggregations.put("amount", "sum");
-            aggregations.put("quantity", "sum");
-            aggregations.put("order_id", "count");
-
-            Dataset<Row> salesByCategory = pipeline.performAggregations(
-                    sales,
-                    new String[]{"category", "month"},
-                    aggregations
-            );
-
-            // Salvare rezultate
-            pipeline.saveAsCSV(salesByCategory, "output/sales_by_category", true);
-            pipeline.logDatasetInfo(salesByCategory, "Vânzări pe Categorii");
-
-        } catch (Exception e) {
-            logger.error("Eroare în procesare CSV: " + e.getMessage(), e);
-        }
+        nullCounts.show();
     }
 
-    /**
-     * Exemplu 2: Join între multiple surse de date
-     */
-    public void multiSourceJoinExample() {
-        logger.info("=== Exemplu 2: Join Multiple Surse ===");
+    public void orderCycleTimeAnalysis() {
+        logger.info("=== Exemplu 8: Analiza Duratei Comenzii ===");
 
-        try {
-            // Citire date din diferite surse
-            Dataset<Row> customers = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\customers.csv", true, ",");
-            Dataset<Row> orders = pipeline.readJSON("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\orders.json");
-            Dataset<Row> products = pipeline.readParquet("data/products.parquet");
+        Dataset<Row> sales = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv");
 
-            // Join orders cu customers
-            Dataset<Row> ordersWithCustomers = pipeline.joinDatasets(
-                    orders,
-                    customers,
-                    new String[]{"customer_id"},
-                    "left"
-            );
+        sales = sales.withColumn("order_duration", expr("DATEDIFF(sale_date, order_date)"));
 
-            // Join cu products
-            Dataset<Row> completeData = pipeline.joinDatasets(
-                    ordersWithCustomers,
-                    products,
-                    new String[]{"product_id"},
-                    "left"
-            );
+        Dataset<Row> avgDuration = sales.withColumn(
+                        "order_duration", expr("DATEDIFF(sale_date, order_date)")
+                ).groupBy("store_id")  // Sau "status", "month", etc.
+                .agg(avg("order_duration").alias("average_duration"))
+                .orderBy(desc("average_duration"));
 
-            // Selectare coloane relevante
-            Dataset<Row> finalData = pipeline.selectColumns(
-                    completeData,
-                    new String[]{"order_id", "customer_name", "product_name",
-                            "quantity", "price", "order_date"}
-            );
 
-            // Salvare în Parquet pentru performanță
-            pipeline.saveAsParquet(finalData, "output/complete_orders");
-
-        } catch (Exception e) {
-            logger.error("Eroare în join: " + e.getMessage(), e);
-        }
+        avgDuration.show();
     }
 
-    /**
-     * Exemplu 3: Procesare date din baza de date
-     */
-    public void databaseProcessingExample() {
-        logger.info("=== Exemplu 3: Procesare Date din DB ===");
+    public void detectPriceOutliers() {
+        logger.info("=== Exemplu 9: Detectare Prețuri Suspecte ===");
 
-        try {
-            // Configurare conexiune MySQL
-            Properties mysqlProps = new Properties();
-            mysqlProps.put("user", "dataeng_user");
-            mysqlProps.put("password", "secure_password");
-            mysqlProps.put("driver", "com.mysql.jdbc.Driver");
+        Dataset<Row> products = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\products_full.csv");
 
-            String mysqlUrl = "jdbc:mysql://localhost:3306/sales_db";
+        Dataset<Row> outliers = products.filter("price < 10 OR price > 10000");
 
-            // Citire tabele
-            Dataset<Row> transactions = pipeline.readFromDatabase(
-                    mysqlUrl, "transactions", mysqlProps
-            );
-
-            Dataset<Row> customers = pipeline.readFromDatabase(
-                    mysqlUrl, "customers", mysqlProps
-            );
-
-            // Procesare
-            transactions = pipeline.filterData(transactions, "status = 'COMPLETED'");
-
-            // Join și agregare
-            Dataset<Row> customerStats = pipeline.joinDatasets(
-                    transactions,
-                    customers,
-                    new String[]{"customer_id"},
-                    "inner"
-            );
-
-            Map<String, String> aggregations = new HashMap<>();
-            aggregations.put("amount", "sum");
-            aggregations.put("amount", "avg");
-            aggregations.put("transaction_id", "count");
-
-            customerStats = pipeline.performAggregations(
-                    customerStats,
-                    new String[]{"customer_id", "customer_segment"},
-                    aggregations
-            );
-
-            // Salvare înapoi în DB
-            pipeline.saveToDatabase(
-                    customerStats,
-                    mysqlUrl,
-                    "customer_statistics",
-                    mysqlProps
-            );
-
-        } catch (Exception e) {
-            logger.error("Eroare în procesare DB: " + e.getMessage(), e);
-        }
+        outliers.show();
     }
 
-    /**
-     * Exemplu 4: Utilizare SQL pentru analize complexe
-     */
-    public void complexSQLAnalysis() {
-        logger.info("=== Exemplu 4: Analize SQL Complexe ===");
+    public void currencyConversionExample() {
+        logger.info("=== Exemplu 10: Conversie RON în EUR ===");
 
-        try {
-            // Citire date
-            Dataset<Row> sales = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_full.csv", true, ",");
-            Dataset<Row> products = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\products_full.csv", true, ",");
-            Dataset<Row> stores = pipeline.readCSV("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\stores.csv", true, ",");
+        Dataset<Row> sales = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv");
 
-            // Creare view-uri temporare
-            sales.createOrReplaceTempView("sales");
-            products.createOrReplaceTempView("products");
-            stores.createOrReplaceTempView("stores");
+        double exchangeRate = 0.2; // Exemplu: 1 RON = 0.2 EUR
 
-            // Query 1: Top 10 produse pe regiuni
-            String topProductsQuery = """
-                WITH regional_sales AS (
-                    SELECT
-                        s.product_id,
-                        p.product_name,
-                        st.region,
-                        SUM(s.quantity) as total_quantity,
-                        SUM(s.amount) as total_revenue
-                    FROM sales s
-                    JOIN products p ON s.product_id = p.product_id
-                    JOIN stores st ON s.store_id = st.store_id
-                    WHERE s.sale_date >= '2024-01-01'
-                    GROUP BY s.product_id, p.product_name, st.region
-                ),
-                ranked_products AS (
-                    SELECT
-                        *,
-                        ROW_NUMBER() OVER (PARTITION BY region ORDER BY total_revenue DESC) as rank
-                    FROM regional_sales
-                )
-                SELECT * FROM ranked_products WHERE rank <= 10
-                ORDER BY region, rank
-            """;
-
-            Dataset<Row> topProducts = pipeline.getSparkSession().sql(topProductsQuery);
-            pipeline.saveAsCSV(topProducts, "output/top_products_by_region", true);
-
-            // Query 2: Analiza trend lunar
-            String trendQuery = """
-                SELECT
-                    DATE_FORMAT(sale_date, 'yyyy-MM') as month,
-                    p.category,
-                    COUNT(DISTINCT s.customer_id) as unique_customers,
-                    COUNT(*) as transactions,
-                    SUM(s.amount) as revenue,
-                    AVG(s.amount) as avg_transaction_value
-                FROM sales s
-                JOIN products p ON s.product_id = p.product_id
-                GROUP BY DATE_FORMAT(sale_date, 'yyyy-MM'), p.category
-                ORDER BY month, revenue DESC
-            """;
-
-            Dataset<Row> monthlyTrend = pipeline.getSparkSession().sql(trendQuery);
-            pipeline.saveAsParquet(monthlyTrend, "output/monthly_trends");
-
-        } catch (Exception e) {
-            logger.error("Eroare în analiza SQL: " + e.getMessage(), e);
-        }
+        Dataset<Row> converted = sales.withColumn("amount_eur", col("amount").multiply(exchangeRate));
+        converted.select("order_id", "amount", "amount_eur").show(10);
     }
 
-    /**
-     * Exemplu 5: Pipeline complet cu monitorizare performanță
-     */
-    public void fullPipelineWithMonitoring() {
-        logger.info("=== Exemplu 5: Pipeline Complet cu Monitorizare ===");
-
-        SparkSession spark = pipeline.getSparkSession();
-
-        try {
-            // Monitorizare citire date
-            pipeline.monitorPerformance("Citire date inițiale", () -> {
-                Dataset<Row> rawData = pipeline.readCSV("data/large_dataset.csv", true, ",");
-                rawData.cache(); // Cache pentru reutilizare
-                logger.info("Date citite: " + rawData.count() + " rânduri");
-            });
-
-            // Procesare în etape cu monitorizare
-            Dataset<Row> processedData = null;
-
-            pipeline.monitorPerformance("Curățare și validare", () -> {
-                Dataset<Row> data = spark.table("raw_data");
-
-                // Eliminare valori null
-                Map<String, Object> fillValues = new HashMap<>();
-                fillValues.put("quantity", 0);
-                fillValues.put("price", 0.0);
-                fillValues.put("category", "Unknown");
-
-                data = pipeline.handleMissingValues(data, fillValues);
-                data = pipeline.cleanAndValidateData(data);
-
-                data.createOrReplaceTempView("cleaned_data");
-            });
-
-            pipeline.monitorPerformance("Transformări complexe", () -> {
-                String transformQuery = """
-                    SELECT
-                        *,
-                        CASE
-                            WHEN amount > 10000 THEN 'HIGH'
-                            WHEN amount > 1000 THEN 'MEDIUM'
-                            ELSE 'LOW'
-                        END as value_category,
-                        amount * quantity as total_value,
-                        DATEDIFF(current_date(), order_date) as days_since_order
-                    FROM cleaned_data
-                    WHERE status IN ('COMPLETED', 'SHIPPED')
-                """;
-
-                Dataset<Row> transformed = spark.sql(transformQuery);
-                transformed.createOrReplaceTempView("transformed_data");
-            });
-
-            pipeline.monitorPerformance("Agregări finale", () -> {
-                String aggregationQuery = """
-                    SELECT
-                        value_category,
-                        category,
-                        COUNT(*) as order_count,
-                        SUM(total_value) as total_revenue,
-                        AVG(total_value) as avg_order_value,
-                        STDDEV(total_value) as stddev_order_value,
-                        MIN(days_since_order) as min_days,
-                        MAX(days_since_order) as max_days
-                    FROM transformed_data
-                    GROUP BY value_category, category
-                    WITH ROLLUP
-                """;
-
-                Dataset<Row> aggregated = spark.sql(aggregationQuery);
-
-                // Optimizare pentru volume mari
-                aggregated = pipeline.optimizeForLargeScale(aggregated);
-
-                // Salvare cu partitionare
-                aggregated.write()
-                        .mode("overwrite")
-                        .partitionBy("value_category")
-                        .parquet("output/aggregated_results");
-            });
-
-            logger.info("Pipeline complet executat cu succes!");
-
-        } catch (Exception e) {
-            logger.error("Eroare în pipeline complet: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Exemplu 6: Procesare streaming simulată
-     */
-    public void batchProcessingExample() {
-        logger.info("=== Exemplu 6: Procesare Batch (Simulare Streaming) ===");
-
-        try {
-            // Simulare procesare în batch-uri
-            for (int batch = 1; batch <= 5; batch++) {
-                final int batchNum = batch;
-
-                pipeline.monitorPerformance("Procesare Batch " + batchNum, () -> {
-                    // Citire batch de date
-                    Dataset<Row> batchData = pipeline.readCSV(
-                            "data/batch_" + batchNum + ".csv", true, ","
-                    );
-
-                    // Procesare rapidă
-                    batchData = pipeline.filterData(batchData, "status = 'NEW'");
-
-                    // Agregare incrementală
-                    Map<String, String> aggregations = new HashMap<>();
-                    aggregations.put("amount", "sum");
-                    aggregations.put("order_id", "count");
-
-                    Dataset<Row> batchAggregated = pipeline.performAggregations(
-                            batchData,
-                            new String[]{"hour", "category"},
-                            aggregations
-                    );
-
-                    // Append la rezultate existente
-                    batchAggregated.write()
-                            .mode("append")
-                            .parquet("output/incremental_results");
-
-                    logger.info("Batch " + batchNum + " procesat cu succes");
-                });
-
-                // Simulare delay între batch-uri
-                Thread.sleep(2000);
-            }
-
-        } catch (Exception e) {
-            logger.error("Eroare în procesare batch: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Main method pentru rulare exemple
-     */
     public static void main(String[] args) {
+        SparkSession spark = SparkSession.builder()
+                .appName("JoinSalesWithProducts")
+                .master("local[*]")
+                .getOrCreate();
+
+        // 1. Citire fișier sales
+        Dataset<Row> sales = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\sales_2024.csv");
+
+        // 2. Citire fișier products
+        Dataset<Row> products = spark.read()
+                .option("header", true)
+                .option("inferSchema", true)
+                .csv("C:\\Users\\Raluca PC\\IdeaProjects\\spark-data-engineering\\src\\main\\data\\products_full.csv");
+
+        Dataset<Row> salesClean = sales.drop("category");
+
+        Dataset<Row> joined = salesClean.join(products, "product_id");
+
+        Dataset<Row> selected = joined.select(
+                joined.col("product_id"),
+                joined.col("category"),
+                joined.col("amount"),
+                joined.col("quantity")
+        );
+
+        Dataset<Row> aggregated = selected.groupBy("category")
+                .agg(
+                        sum("amount").alias("total_sales"),
+                        sum("quantity").alias("total_quantity")
+                )
+                .orderBy(desc("total_sales"));
+
+        aggregated.show();
+
+
+        // 1. Cele mai vândute produse (top 10 după amount)
+        Dataset<Row> topProducts = joined.select("product_id", "product_name", "amount")
+                .groupBy("product_id", "product_name")
+                .agg(sum("amount").alias("total_sales"))
+                .orderBy(desc("total_sales"))
+                .limit(10);
+
+        System.out.println("Top 10 cele mai vândute produse:");
+        topProducts.show();
+
+        // 2. Vânzări pe lună (month)
+        Dataset<Row> monthlySales = joined.groupBy("month")
+                .agg(sum("amount").alias("total_sales"))
+                .orderBy("month");
+
+        System.out.println("Vânzări lunare:");
+        monthlySales.show();
+
+        //3. Vânzări per magazin (store_id)
+        Dataset<Row> salesByStore = joined.groupBy("store_id")
+                .agg(sum("amount").alias("total_sales"))
+                .orderBy(desc("total_sales"));
+
+        System.out.println("Vânzări pe magazin:");
+        salesByStore.show();
+
+        //4. Vânzări medii per categorie
+        Dataset<Row> averageByCategory = selected.groupBy("category")
+                .agg(
+                        sum("amount").divide(sum("quantity")).alias("average_price")
+                )
+                .orderBy(desc("average_price"));
+
+        System.out.println("Preț mediu per categorie:");
+        averageByCategory.show();
+
+        //5. Număr total de produse vândute per categorie
+        Dataset<Row> countByCategory = selected.groupBy("category")
+                .agg(sum("quantity").alias("total_units"))
+                .orderBy(desc("total_units"));
+
+        System.out.println("Număr total de produse vândute per categorie:");
+        countByCategory.show();
+
+
+        Dataset<Row> salesByStatus = joined.groupBy("status")
+                .agg(sum("amount").alias("total_sales"))
+                .orderBy(desc("total_sales"));
+
+        System.out.println("Vânzări per status comandă:");
+        salesByStatus.show();
+
+        Dataset<Row> salesPerMonthCategory = joined.groupBy("month", "category")
+                .agg(sum("amount").alias("monthly_sales"))
+                .orderBy(col("month"), desc("monthly_sales"));
+
+        System.out.println("Vânzări lunare per categorie:");
+        salesPerMonthCategory.show();
+
+        Dataset<Row> bestSellingByQuantity = selected.groupBy("category")
+                .agg(sum("quantity").alias("total_quantity"))
+                .orderBy(desc("total_quantity"));
+
+        System.out.println("Categorii cele mai vândute (după cantitate):");
+        bestSellingByQuantity.show();
+
+        Dataset<Row> avgRevenuePerProduct = joined.groupBy("product_id", "product_name")
+                .agg(
+                        sum("amount").alias("total_sales"),
+                        sum("quantity").alias("total_qty"),
+                        sum("amount").divide(sum("quantity")).alias("avg_price_per_unit")
+                )
+                .orderBy(desc("avg_price_per_unit"));
+
+        System.out.println("Produse cu încasări medii per unitate cele mai mari:");
+        avgRevenuePerProduct.show();
+
+
+        Dataset<Row> ordersPerCustomer = joined.groupBy("customer_id")
+                .count()
+                .orderBy(desc("count"));
+
+        System.out.println("Număr comenzi per client:");
+        ordersPerCustomer.show();
+
         UsageExamples examples = new UsageExamples();
 
-        try {
-            if (args.length == 0) {
-                logger.info("Rulare toate exemplele...");
-                examples.processCSVExample();
-                examples.multiSourceJoinExample();
-                examples.complexSQLAnalysis();
-                examples.fullPipelineWithMonitoring();
-            } else {
-                switch (args[0]) {
-                    case "csv":
-                        examples.processCSVExample();
-                        break;
-                    case "join":
-                        examples.multiSourceJoinExample();
-                        break;
-                    case "db":
-                        examples.databaseProcessingExample();
-                        break;
-                    case "sql":
-                        examples.complexSQLAnalysis();
-                        break;
-                    case "full":
-                        examples.fullPipelineWithMonitoring();
-                        break;
-                    case "batch":
-                        examples.batchProcessingExample();
-                        break;
-                    default:
-                        logger.error("Exemplu necunoscut: " + args[0]);
-                }
-            }
-        } finally {
-            // Închidere Spark Session
-            if (examples.pipeline.getSparkSession() != null) {
-                examples.pipeline.getSparkSession().stop();
-            }
-        }
+        examples.missingDataAnalysis();
+        examples.orderCycleTimeAnalysis();
+        examples.detectPriceOutliers();
+        examples.currencyConversionExample();
+
+        examples.spark.stop();
+
+        // Închide sesiunea
+        spark.stop();
+
+
     }
 }
